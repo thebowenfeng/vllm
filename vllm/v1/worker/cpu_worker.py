@@ -72,7 +72,9 @@ class CPUWorker(Worker):
                 self.local_omp_cpuid = self._get_autobind_cpu_ids(lambda cpus: cpus)
             else:
                 self.local_omp_cpuid = "nobind"
-        elif omp_cpuids == "nobind":
+        elif omp_cpuids in ("auto", "nobind"):
+            # "auto" on non-Linux platforms (e.g. macOS) falls through here
+            # since autobind is unsupported; treat it as nobind.
             self.local_omp_cpuid = "nobind"
         else:
             local_dp_rank = self.parallel_config.data_parallel_rank_local
