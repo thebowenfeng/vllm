@@ -87,6 +87,9 @@ VLLM_MASTER_PORT=29500
 # Max concurrent sequences — set to 2+ so the scheduler can pipeline two
 # simultaneous requests instead of serialising them behind each other.
 MAX_NUM_SEQS=2
+# Maximum model sequence length.  Set slightly below the hardware limit to
+# leave room for KV cache overhead.  Override with --max-model-len <N>.
+MAX_MODEL_LEN=29000
 # Remaining args after known flags are forwarded verbatim to `vllm serve`
 VLLM_EXTRA_ARGS=()
 
@@ -131,6 +134,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --max-num-seqs)
             MAX_NUM_SEQS="$2"
+            shift 2
+            ;;
+        --max-model-len)
+            MAX_MODEL_LEN="$2"
             shift 2
             ;;
         *)
@@ -223,6 +230,7 @@ echo "  This node IP    : ${NODE_IP}"
 [[ -n "${NODE_RANK}" ]] && echo "  Node rank       : ${NODE_RANK}"
 [[ -n "${NNODES}" ]]    && echo "  Total nodes     : ${NNODES}"
 echo "  Max num seqs    : ${MAX_NUM_SEQS}"
+echo "  Max model len   : ${MAX_MODEL_LEN}"
 echo "============================================================"
 
 # Build the scheduling-related flags to inject into vllm serve
@@ -231,7 +239,7 @@ echo "============================================================"
 # `pp_size <= 1 && async_scheduling` in multiproc_executor.py means async
 # scheduling only applies to non-pipeline-parallel setups). Passing it with
 # PP>1 is misleading and has no effect.
-SCHEDULING_ARGS=("--max-num-seqs" "${MAX_NUM_SEQS}")
+SCHEDULING_ARGS=("--max-num-seqs" "${MAX_NUM_SEQS}" "--max-model-len" "${MAX_MODEL_LEN}")
 
 # ─── RAY BACKEND ─────────────────────────────────────────────────────────────
 if [[ "${BACKEND}" == "ray" ]]; then
@@ -250,7 +258,8 @@ if [[ "${BACKEND}" == "ray" ]]; then
         echo "      --tensor-parallel-size <gpus_per_node> \\"
         echo "      --pipeline-parallel-size <num_nodes> \\"
         echo "      --distributed-executor-backend ray \\"
-        echo "      --max-num-seqs ${MAX_NUM_SEQS}"
+        echo "      --max-num-seqs ${MAX_NUM_SEQS} \\"
+        echo "      --max-model-len ${MAX_MODEL_LEN}"
         echo ""
         ray start \
             --head \

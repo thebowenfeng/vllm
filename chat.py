@@ -245,26 +245,22 @@ def stream_response(client: OpenAI, model: str,
 
     Returns a tuple of (full_response_text, prompt_tokens, completion_tokens).
 
-    Token counts are read from the usage field on each chunk as it arrives.
-    We intentionally do NOT use stream_options={"include_usage": True} because
-    that mode makes vLLM emit one extra SSE chunk (with choices=[]) AFTER the
-    normal [DONE] sentinel.  Under concurrent load the OpenAI Python client's
-    synchronous httpx iterator can stall waiting for that extra chunk if the
-    server's event loop is busy handling another request's finish logic,
-    causing both streams to appear frozen mid-generation.
-
-    Instead we rely on vLLM's per-chunk usage fields (sent on the final
-    content chunk when finish_reason is set), which are available without
-    needing the extra trailing chunk.
+    stream_options={"include_usage": True} is sent so vLLM appends a final
+    usage-only chunk (choices=[]) before [DONE].  The OpenAI client handles
+    this transparently; we capture it to get exact token counts for GFLOP
+    estimation without any separate API call.
     """
     kwargs: dict = dict(
         model=model,
         messages=messages,
         stream=True,
         temperature=temperature,
-        # Pass enable_thinking via extra_body so Qwen3 (and compatible models)
-        # honour it.  Non-Qwen3 servers silently ignore unknown extra_body keys.
-        extra_body={"enable_thinking": enable_thinking},
+        # include_usage gives us exact token counts for GFLOP estimation.
+        # The usage chunk arrives before [DONE] so it does not cause hangs.
+        stream_options={"include_usage": True},
+        # Pass enable_thinking via chat_template_kwargs (the correct vLLM path).
+        # Top-level extra_body fields are silently ignored for this setting.
+        extra_body={"chat_template_kwargs": {"enable_thinking": enable_thinking}},
     )
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
