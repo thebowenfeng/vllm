@@ -233,6 +233,21 @@ echo "  Max num seqs    : ${MAX_NUM_SEQS}"
 echo "  Max model len   : ${MAX_MODEL_LEN}"
 echo "============================================================"
 
+# Check /dev/shm size — vLLM uses shared memory for TP worker broadcast.
+# WSL defaults to 64MB which is far too small; warn if under 1GB.
+if [[ -d /dev/shm ]]; then
+    SHM_KB=$(df -k /dev/shm 2>/dev/null | awk 'NR==2 {print $2}')
+    SHM_GB=$(( ${SHM_KB:-0} / 1048576 ))
+    if [[ "${SHM_KB:-0}" -lt 1048576 ]]; then
+        echo ""
+        echo "  WARNING: /dev/shm is only $(( ${SHM_KB:-0} / 1024 ))MB."
+        echo "  vLLM needs at least 1GB of shared memory for TP worker broadcast."
+        echo "  Fix with: sudo mount -o remount,size=8G /dev/shm"
+        echo "  (WSL users: add 'kernelCommandLine=tmpfs.size=8G' to ~/.wslconfig)"
+        echo ""
+    fi
+fi
+
 # Build the scheduling-related flags to inject into vllm serve
 # NOTE: --async-scheduling is intentionally omitted here.
 # vLLM silently ignores it when pipeline_parallel_size > 1 (the condition
