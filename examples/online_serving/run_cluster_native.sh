@@ -90,6 +90,15 @@ MAX_NUM_SEQS=2
 # Maximum model sequence length.  Set slightly below the hardware limit to
 # leave room for KV cache overhead.  Override with --max-model-len <N>.
 MAX_MODEL_LEN=29000
+# Disable torch.compile and cudagraph capture (--enforce-eager).
+# Essential on WSL and CPU-only systems where compilation stalls TP worker
+# broadcast, causing "No available shared memory broadcast block" errors.
+# Set to false to re-enable compilation (faster inference after warmup).
+ENFORCE_EAGER=true
+# Worker initialisation timeout in seconds.  WSL has slow filesystem I/O,
+# especially when the model lives on a Windows path (/mnt/c/...).
+# Increase this if workers time out during weight loading.
+WORKER_TIMEOUT=300
 # Remaining args after known flags are forwarded verbatim to `vllm serve`
 VLLM_EXTRA_ARGS=()
 
@@ -138,6 +147,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --max-model-len)
             MAX_MODEL_LEN="$2"
+            shift 2
+            ;;
+        --no-enforce-eager)
+            ENFORCE_EAGER=false
+            shift
+            ;;
+        --worker-timeout)
+            WORKER_TIMEOUT="$2"
             shift 2
             ;;
         *)
@@ -231,13 +248,14 @@ echo "  This node IP    : ${NODE_IP}"
 [[ -n "${NNODES}" ]]    && echo "  Total nodes     : ${NNODES}"
 echo "  Max num seqs    : ${MAX_NUM_SEQS}"
 echo "  Max model len   : ${MAX_MODEL_LEN}"
+echo "  Enforce eager   : ${ENFORCE_EAGER}"
+echo "  Worker timeout  : ${WORKER_TIMEOUT}s"
 echo "============================================================"
 
 # Check /dev/shm size — vLLM uses shared memory for TP worker broadcast.
 # WSL defaults to 64MB which is far too small; warn if under 1GB.
 if [[ -d /dev/shm ]]; then
     SHM_KB=$(df -k /dev/shm 2>/dev/null | awk 'NR==2 {print $2}')
-    SHM_GB=$(( ${SHM_KB:-0} / 1048576 ))
     if [[ "${SHM_KB:-0}" -lt 1048576 ]]; then
         echo ""
         echo "  WARNING: /dev/shm is only $(( ${SHM_KB:-0} / 1024 ))MB."
@@ -248,6 +266,9 @@ if [[ -d /dev/shm ]]; then
     fi
 fi
 
+# Export worker timeout so vLLM engine picks it up via envs.py
+export VLLM_ENGINE_ITERATION_TIMEOUT_S="${WORKER_TIMEOUT}"
+
 # Build the scheduling-related flags to inject into vllm serve
 # NOTE: --async-scheduling is intentionally omitted here.
 # vLLM silently ignores it when pipeline_parallel_size > 1 (the condition
@@ -255,6 +276,9 @@ fi
 # scheduling only applies to non-pipeline-parallel setups). Passing it with
 # PP>1 is misleading and has no effect.
 SCHEDULING_ARGS=("--max-num-seqs" "${MAX_NUM_SEQS}" "--max-model-len" "${MAX_MODEL_LEN}")
+if [[ "${ENFORCE_EAGER}" == "true" ]]; then
+    SCHEDULING_ARGS+=("--enforce-eager")
+fi
 
 # ─── RAY BACKEND ─────────────────────────────────────────────────────────────
 if [[ "${BACKEND}" == "ray" ]]; then
@@ -274,7 +298,11 @@ if [[ "${BACKEND}" == "ray" ]]; then
         echo "      --pipeline-parallel-size <num_nodes> \\"
         echo "      --distributed-executor-backend ray \\"
         echo "      --max-num-seqs ${MAX_NUM_SEQS} \\"
-        echo "      --max-model-len ${MAX_MODEL_LEN}"
+        echo "      --max-model-len ${MAX_MODEL_LEN} \\"
+        if [[ "${ENFORCE_EAGER}" == "true" ]]; then
+            echo "      --enforce-eager \\"
+        fi
+        echo "      (VLLM_ENGINE_ITERATION_TIMEOUT_S=${WORKER_TIMEOUT} already exported)"
         echo ""
         ray start \
             --head \
