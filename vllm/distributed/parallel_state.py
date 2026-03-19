@@ -1452,6 +1452,9 @@ def init_distributed_environment(
         else:
             _NODE_COUNT = _node_count(_WORLD.cpu_group)
         logger.debug("Detected %d nodes in the distributed environment", _NODE_COUNT)
+        # Default _INNER_DP_WORLD to _WORLD; may be overridden below when
+        # config is available and data_parallel_size > 1.
+        _INNER_DP_WORLD = _WORLD
     else:
         assert _WORLD.world_size == torch.distributed.get_world_size(), (
             "world group already initialized with a different world size"
